@@ -1,0 +1,99 @@
+// Copyright (C) 2024 Kumo inc.
+// Author: Jeff.li lijippy@163.com
+// All rights reserved.
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published
+// by the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+//
+#ifndef VAMOS_VALID_UTF16_TO_UTF8_H
+#define VAMOS_VALID_UTF16_TO_UTF8_H
+
+namespace vamos {
+namespace scalar {
+namespace {
+namespace utf16_to_utf8 {
+
+template <endianness big_endian>
+inline size_t convert_valid(const char16_t *buf, size_t len,
+                            char *utf8_output) {
+  const uint16_t *data = reinterpret_cast<const uint16_t *>(buf);
+  size_t pos = 0;
+  char *start{utf8_output};
+  while (pos < len) {
+    // try to convert the next block of 4 ASCII characters
+    if (pos + 4 <=
+        len) { // if it is safe to read 8 more bytes, check that they are ascii
+      uint64_t v;
+      ::memcpy(&v, data + pos, sizeof(uint64_t));
+      if (!match_system(big_endian)) {
+        v = (v >> 8) | (v << (64 - 8));
+      }
+      if ((v & 0xFF80FF80FF80FF80) == 0) {
+        size_t final_pos = pos + 4;
+        while (pos < final_pos) {
+          *utf8_output++ = !match_system(big_endian)
+                               ? char(u16_swap_bytes(buf[pos]))
+                               : char(buf[pos]);
+          pos++;
+        }
+        continue;
+      }
+    }
+
+    uint16_t word =
+        !match_system(big_endian) ? u16_swap_bytes(data[pos]) : data[pos];
+    if ((word & 0xFF80) == 0) {
+      // will generate one UTF-8 bytes
+      *utf8_output++ = char(word);
+      pos++;
+    } else if ((word & 0xF800) == 0) {
+      // will generate two UTF-8 bytes
+      // we have 0b110XXXXX 0b10XXXXXX
+      *utf8_output++ = char((word >> 6) | 0b11000000);
+      *utf8_output++ = char((word & 0b111111) | 0b10000000);
+      pos++;
+    } else if ((word & 0xF800) != 0xD800) {
+      // will generate three UTF-8 bytes
+      // we have 0b1110XXXX 0b10XXXXXX 0b10XXXXXX
+      *utf8_output++ = char((word >> 12) | 0b11100000);
+      *utf8_output++ = char(((word >> 6) & 0b111111) | 0b10000000);
+      *utf8_output++ = char((word & 0b111111) | 0b10000000);
+      pos++;
+    } else {
+      // must be a surrogate pair
+      uint16_t diff = uint16_t(word - 0xD800);
+      if (pos + 1 >= len) {
+        return 0;
+      } // minimal bound checking
+      uint16_t next_word = !match_system(big_endian)
+                               ? u16_swap_bytes(data[pos + 1])
+                               : data[pos + 1];
+      uint16_t diff2 = uint16_t(next_word - 0xDC00);
+      uint32_t value = (diff << 10) + diff2 + 0x10000;
+      // will generate four UTF-8 bytes
+      // we have 0b11110XXX 0b10XXXXXX 0b10XXXXXX 0b10XXXXXX
+      *utf8_output++ = char((value >> 18) | 0b11110000);
+      *utf8_output++ = char(((value >> 12) & 0b111111) | 0b10000000);
+      *utf8_output++ = char(((value >> 6) & 0b111111) | 0b10000000);
+      *utf8_output++ = char((value & 0b111111) | 0b10000000);
+      pos += 2;
+    }
+  }
+  return utf8_output - start;
+}
+
+} // namespace utf16_to_utf8
+} // unnamed namespace
+} // namespace scalar
+} // namespace vamos
+
+#endif

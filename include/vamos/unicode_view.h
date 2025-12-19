@@ -1,0 +1,551 @@
+// Copyright (C) 2024 Kumo inc.
+// Author: Jeff.li lijippy@163.com
+// All rights reserved.
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published
+// by the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+//
+#pragma once
+
+#include <algorithm>
+#include <cassert>
+#include <cstddef>
+#include <cstring>
+#include <iosfwd>
+#include <iterator>
+#include <limits>
+#include <stdexcept>
+#include <string>
+#include <vamos/implementation.h>
+
+namespace vamos {
+
+    class unicode_view {
+    public:
+        using traits_type = std::char_traits<char32_t>;
+        using value_type = char32_t;
+        using pointer = char32_t *;
+        using const_pointer = const char32_t *;
+        using reference = char32_t &;
+        using const_reference = const char32_t &;
+        using const_iterator = const char32_t *;
+        using iterator = const_iterator;
+        using const_reverse_iterator = std::reverse_iterator<const_iterator>;
+        using reverse_iterator = const_reverse_iterator;
+        using size_type = size_t;
+        using difference_type = std::ptrdiff_t;
+
+        static constexpr size_type npos = static_cast<size_type>(-1);
+
+        // Null `unicode_view` constructor
+        constexpr unicode_view() noexcept: ptr_(nullptr), length_(0) {
+        }
+
+        // Implicit constructors
+        constexpr unicode_view(std::basic_string_view<value_type, std::char_traits<value_type>> str) noexcept
+                : unicode_view(str.data(), str.size()) {
+        }
+
+        // Implicit constructor of a `unicode_view` from NUL-terminated `str`. When
+        // accepting possibly null strings, use `turbo::NullSafeStringView(str)`
+        // instead (see below).
+
+        constexpr unicode_view(const value_type *str) noexcept
+                : ptr_(str), length_(str ? (traits_type::length(str)) : 0) {
+        }
+
+
+        // Implicit constructor of a `unicode_view` from a `const value_type*` and length.
+        constexpr unicode_view(const value_type *data, size_type len) noexcept
+                : ptr_(data), length_(len) {
+        }
+
+        unicode_view& operator=(const unicode_view&) noexcept = default;
+        constexpr unicode_view(const unicode_view&) noexcept = default;
+
+        unicode_view& operator=(std::basic_string_view<value_type, std::char_traits<value_type>> str) noexcept {
+            ptr_ = str.data();
+            length_ = str.size();
+            return *this;
+        }
+        // Iterators
+
+        // unicode_view::begin()
+        //
+        // Returns an iterator pointing to the first character at the beginning of the
+        // `unicode_view`, or `end()` if the `unicode_view` is empty.
+        [[nodiscard]] constexpr const_iterator begin() const noexcept {
+            return ptr_;
+        }
+
+        // unicode_view::end()
+        //
+        // Returns an iterator pointing just beyond the last character at the end of
+        // the `unicode_view`. This iterator acts as a placeholder; attempting to
+        // access it results in undefined behavior.
+        [[nodiscard]] constexpr const_iterator end() const noexcept {
+            return ptr_ + length_;
+        }
+
+        // unicode_view::cbegin()
+        //
+        // Returns a const iterator pointing to the first character at the beginning
+        // of the `unicode_view`, or `end()` if the `unicode_view` is empty.
+        [[nodiscard]] constexpr const_iterator cbegin() const noexcept {
+            return begin();
+        }
+
+        // unicode_view::cend()
+        //
+        // Returns a const iterator pointing just beyond the last character at the end
+        // of the `unicode_view`. This pointer acts as a placeholder; attempting to
+        // access its element results in undefined behavior.
+        [[nodiscard]] constexpr const_iterator cend() const noexcept {
+            return end();
+        }
+
+        // unicode_view::rbegin()
+        //
+        // Returns a reverse iterator pointing to the last character at the end of the
+        // `unicode_view`, or `rend()` if the `unicode_view` is empty.
+        [[nodiscard]] const_reverse_iterator rbegin() const noexcept {
+            return const_reverse_iterator(end());
+        }
+
+        // unicode_view::rend()
+        //
+        // Returns a reverse iterator pointing just before the first character at the
+        // beginning of the `unicode_view`. This pointer acts as a placeholder;
+        // attempting to access its element results in undefined behavior.
+        [[nodiscard]] const_reverse_iterator rend() const noexcept {
+            return const_reverse_iterator(begin());
+        }
+
+        // unicode_view::crbegin()
+        //
+        // Returns a const reverse iterator pointing to the last character at the end
+        // of the `unicode_view`, or `crend()` if the `unicode_view` is empty.
+        [[nodiscard]] const_reverse_iterator crbegin() const noexcept {
+            return rbegin();
+        }
+
+        // unicode_view::crend()
+        //
+        // Returns a const reverse iterator pointing just before the first character
+        // at the beginning of the `unicode_view`. This pointer acts as a placeholder;
+        // attempting to access its element results in undefined behavior.
+        [[nodiscard]] const_reverse_iterator crend() const noexcept {
+            return rend();
+        }
+
+        // Capacity Utilities
+
+        // unicode_view::size()
+        //
+        // Returns the number of characters in the `unicode_view`.
+        [[nodiscard]] constexpr size_type size() const noexcept {
+            return length_;
+        }
+
+        // unicode_view::length()
+        //
+        // Returns the number of characters in the `unicode_view`. Alias for `size()`.
+        [[nodiscard]] constexpr size_type length() const noexcept {
+            return size();
+        }
+
+        // unicode_view::empty()
+        //
+        // Checks if the `unicode_view` is empty (refers to no characters).
+        [[nodiscard]] constexpr bool empty() const noexcept {
+            return length_ == 0;
+        }
+
+        // unicode_view::operator[]
+        //
+        // Returns the ith element of the `unicode_view` using the array operator.
+        // Note that this operator does not perform any bounds checking.
+        constexpr const_reference operator[](size_type i) const noexcept {
+            return assert(i < size()), ptr_[i];
+        }
+
+        // unicode_view::at()
+        //
+        // Returns the ith element of the `unicode_view`. Bounds checking is performed,
+        // and an exception of type `std::out_of_range` will be thrown on invalid
+        // access.
+        [[nodiscard]] constexpr const_reference at(size_type i) const {
+            return vamos_likely(i < size()) ? ptr_[i] : throw std::out_of_range("unicode_view::at"),
+                    ptr_[i];
+        }
+
+        // unicode_view::front()
+        //
+        // Returns the first element of a `unicode_view`.
+        [[nodiscard]] constexpr const_reference front() const noexcept {
+            return assert(!empty()), ptr_[0];
+        }
+
+        // unicode_view::back()
+        //
+        // Returns the last element of a `unicode_view`.
+        [[nodiscard]] constexpr const_reference back() const noexcept {
+            return assert(!empty()), ptr_[size() - 1];
+        }
+
+        // unicode_view::data()
+        //
+        // Returns a pointer to the underlying character array (which is of course
+        // stored elsewhere). Note that `unicode_view::data()` may contain embedded nul
+        // characters, but the returned buffer may or may not be NUL-terminated;
+        // therefore, do not pass `data()` to a routine that expects a NUL-terminated
+        // std::string.
+        [[nodiscard]] constexpr const_pointer data() const noexcept {
+            return ptr_;
+        }
+
+        // Modifiers
+
+        // unicode_view::remove_prefix()
+        //
+        // Removes the first `n` characters from the `unicode_view`. Note that the
+        // underlying std::string is not changed, only the view.
+        void remove_prefix(size_type n) noexcept {
+            assert(n <= length_);
+            ptr_ += n;
+            length_ -= n;
+        }
+
+        // unicode_view::remove_suffix()
+        //
+        // Removes the last `n` characters from the `unicode_view`. Note that the
+        // underlying std::string is not changed, only the view.
+        void remove_suffix(size_type n) noexcept {
+            assert(n <= length_);
+            length_ -= n;
+        }
+
+        // unicode_view::swap()
+        //
+        // Swaps this `unicode_view` with another `unicode_view`.
+        void swap(unicode_view &s) noexcept {
+            auto t = *this;
+            *this = s;
+            s = t;
+        }
+
+        // Explicit conversion operators
+
+        // Converts to `std::basic_string`.
+        template<typename A>
+        explicit operator std::basic_string<value_type, traits_type, A>() const {
+            if (!data())
+                return {};
+            return std::basic_string<value_type, traits_type, A>(data(), size());
+        }
+
+        // unicode_view::copy()
+        //
+        // Copies the contents of the `unicode_view` at offset `pos` and length `n`
+        // into `buf`.
+        size_type copy(value_type *buf, size_type n, size_type pos = 0) const {
+            if (vamos_unlikely(pos > length_)) {
+                throw std::out_of_range("unicode_view::copy");
+            }
+            size_type rlen = (std::min)(length_ - pos, n);
+            if (rlen > 0) {
+                const value_type *start = ptr_ + pos;
+                traits_type::copy(buf, start, rlen);
+            }
+            return rlen;
+        }
+
+        // unicode_view::substr()
+        //
+        // Returns a "substring" of the `unicode_view` (at offset `pos` and length
+        // `n`) as another unicode_view. This function throws `std::out_of_bounds` if
+        // `pos > size`.
+        [[nodiscard]] unicode_view substr(size_type pos, size_type n = npos) const {
+            return vamos_unlikely(pos > length_)
+                   ? (throw std::out_of_range("unicode_view::substr"), unicode_view{})
+                   : unicode_view(ptr_ + pos, Min(n, length_ - pos));
+        }
+
+        // Nonstandard
+        [[nodiscard]] unicode_view SubStrNoCheck(size_type pos, size_type n = npos) const noexcept {
+            return unicode_view{ptr_ + pos, Min(n, length_ - pos)};
+        }
+
+        // unicode_view::compare()
+        //
+        // Performs a lexicographical comparison between the `unicode_view` and
+        // another `absl::unicode_view`, returning -1 if `this` is less than, 0 if
+        // `this` is equal to, and 1 if `this` is greater than the passed std::string
+        // view. Note that in the case of data equality, a further comparison is made
+        // on the respective sizes of the two `unicode_view`s to determine which is
+        // smaller, equal, or greater.
+        [[nodiscard]] constexpr int compare(unicode_view x) const noexcept {
+            return CompareImpl(
+                    length_,
+                    x.length_,
+                    length_ == 0 || x.length_ == 0
+                    ? 0
+                    : traits_type::compare(ptr_, x.ptr_, length_ < x.length_ ? length_ : x.length_));
+        }
+
+        // Overload of `unicode_view::compare()` for comparing a substring of the
+        // 'unicode_view` and another `absl::unicode_view`.
+        [[nodiscard]] int compare(size_type pos1, size_type count1, unicode_view v) const {
+            return substr(pos1, count1).compare(v);
+        }
+
+        // Overload of `unicode_view::compare()` for comparing a substring of the
+        // `unicode_view` and a substring of another `absl::unicode_view`.
+        [[nodiscard]] int compare(
+                size_type pos1, size_type count1, unicode_view v, size_type pos2, size_type count2) const {
+            return substr(pos1, count1).compare(v.substr(pos2, count2));
+        }
+
+        // Overload of `unicode_view::compare()` for comparing a `unicode_view` and a
+        // a different  C-style std::string `s`.
+        int compare(const value_type *s) const noexcept {
+            return compare(unicode_view(s));
+        }
+
+        // Overload of `unicode_view::compare()` for comparing a substring of the
+        // `unicode_view` and a different std::string C-style std::string `s`.
+        int compare(size_type pos1, size_type count1, const value_type *s) const {
+            return substr(pos1, count1).compare(unicode_view(s));
+        }
+
+        // Overload of `unicode_view::compare()` for comparing a substring of the
+        // `unicode_view` and a substring of a different C-style std::string `s`.
+        int compare(size_type pos1, size_type count1, const value_type *s, size_type count2) const {
+            return substr(pos1, count1).compare(unicode_view(s, count2));
+        }
+
+        // Find Utilities
+
+        // unicode_view::find()
+        //
+        // Finds the first occurrence of the substring `s` within the `unicode_view`,
+        // returning the position of the first character's match, or `npos` if no
+        // match was found.
+        [[nodiscard]] size_type find(unicode_view s, size_type pos = 0) const noexcept;
+
+        // Overload of `unicode_view::find()` for finding the given character `c`
+        // within the `unicode_view`.
+        [[nodiscard]] size_type find(value_type c, size_type pos = 0) const noexcept;
+
+        // unicode_view::rfind()
+        //
+        // Finds the last occurrence of a substring `s` within the `unicode_view`,
+        // returning the position of the first character's match, or `npos` if no
+        // match was found.
+        [[nodiscard]] size_type rfind(unicode_view s, size_type pos = npos) const noexcept;
+
+        // Overload of `unicode_view::rfind()` for finding the last given character `c`
+        // within the `unicode_view`.
+        [[nodiscard]] size_type rfind(value_type c, size_type pos = npos) const noexcept;
+
+        // unicode_view::find_first_of()
+        //
+        // Finds the first occurrence of any of the characters in `s` within the
+        // `unicode_view`, returning the start position of the match, or `npos` if no
+        // match was found.
+        [[nodiscard]] size_type find_first_of(unicode_view s, size_type pos = 0) const noexcept;
+
+        // Overload of `unicode_view::find_first_of()` for finding a character `c`
+        // within the `unicode_view`.
+        [[nodiscard]] size_type find_first_of(value_type c, size_type pos = 0) const noexcept {
+            return find(c, pos);
+        }
+
+        // unicode_view::find_last_of()
+        //
+        // Finds the last occurrence of any of the characters in `s` within the
+        // `unicode_view`, returning the start position of the match, or `npos` if no
+        // match was found.
+        [[nodiscard]] size_type find_last_of(unicode_view s, size_type pos = npos) const noexcept;
+
+        // Overload of `unicode_view::find_last_of()` for finding a character `c`
+        // within the `unicode_view`.
+        [[nodiscard]] size_type find_last_of(value_type c, size_type pos = npos) const noexcept {
+            return rfind(c, pos);
+        }
+
+        // unicode_view::find_first_not_of()
+        //
+        // Finds the first occurrence of any of the characters not in `s` within the
+        // `unicode_view`, returning the start position of the first non-match, or
+        // `npos` if no non-match was found.
+        [[nodiscard]] size_type find_first_not_of(unicode_view s, size_type pos = 0) const noexcept;
+
+        // Overload of `unicode_view::find_first_not_of()` for finding a character
+        // that is not `c` within the `unicode_view`.
+        [[nodiscard]] size_type find_first_not_of(value_type c, size_type pos = 0) const noexcept;
+
+        // unicode_view::find_last_not_of()
+        //
+        // Finds the last occurrence of any of the characters not in `s` within the
+        // `unicode_view`, returning the start position of the last non-match, or
+        // `npos` if no non-match was found.
+        [[nodiscard]] size_type find_last_not_of(unicode_view s, size_type pos = npos) const noexcept;
+
+        // Overload of `unicode_view::find_last_not_of()` for finding a character
+        // that is not `c` within the `unicode_view`.
+        [[nodiscard]] size_type find_last_not_of(value_type c, size_type pos = npos) const noexcept;
+
+        constexpr bool operator==(std::common_type_t<unicode_view> y) const noexcept {
+            return size() == y.size() &&
+                   (empty() || unicode_view::traits_type::compare(data(), y.data(), size()) == 0);
+        }
+
+        constexpr bool operator==(std::basic_string_view<value_type, std::char_traits<value_type>> y) const noexcept {
+            return size() == y.size() &&
+                   (empty() || unicode_view::traits_type::compare(data(), y.data(), size()) == 0);
+        }
+
+        constexpr bool operator==(const value_type *ptr) const noexcept {
+            std::basic_string_view<value_type, std::char_traits<value_type>> y(ptr);
+            return size() == y.size() &&
+                   (empty() || unicode_view::traits_type::compare(data(), y.data(), size()) == 0);
+        }
+
+        constexpr bool operator!=(unicode_view y) const noexcept {
+            return !(*this == y);
+        }
+
+        constexpr bool operator!=(std::basic_string_view<value_type, std::char_traits<value_type>> y) const noexcept {
+            return !(*this == y);
+        }
+
+        constexpr bool operator!=(const value_type *y) const noexcept {
+            return !(*this == y);
+        }
+
+        constexpr bool operator<(const unicode_view &y) const noexcept {
+            return compare(y) < 0;
+        }
+
+        constexpr bool operator<(std::basic_string_view<value_type, std::char_traits<value_type>> sv) const noexcept {
+            unicode_view y(sv);
+            return compare(y) < 0;
+        }
+
+        constexpr bool operator<(const value_type *sv) const noexcept {
+            unicode_view y(sv);
+            return compare(y) < 0;
+        }
+
+        constexpr bool operator>(const unicode_view &y) const noexcept {
+            return compare(y) > 0;
+        }
+
+        constexpr bool operator>(std::basic_string_view<value_type> y) const noexcept {
+            return *this >unicode_view(y);
+        }
+
+        constexpr bool operator>(const value_type *y) const noexcept {
+            return *this >unicode_view(y);
+        }
+
+        constexpr bool operator<=(const unicode_view &y) const noexcept {
+            return !(y < *this);
+        }
+
+        constexpr bool operator<=(std::basic_string_view<value_type> y) const noexcept {
+            return !(unicode_view(y) < *this);
+        }
+
+        constexpr bool operator<=(const value_type *y) const noexcept {
+            return !(unicode_view(y) < *this);
+        }
+
+        constexpr bool operator>=(const unicode_view &y) const noexcept {
+            return !(*this < y);
+        }
+
+        constexpr bool operator>=(std::basic_string_view<value_type> y) const noexcept {
+            return !(*this < y);
+        }
+
+        constexpr bool operator>=(const value_type *y) const noexcept {
+            return !(*this < y);
+        }
+
+    private:
+
+        static constexpr size_t Min(size_type length_a, size_type length_b) noexcept {
+            return length_a < length_b ? length_a : length_b;
+        }
+
+        static constexpr int CompareImpl(size_type length_a,
+                                         size_type length_b,
+                                         int compare_result) noexcept {
+            return compare_result == 0
+                   ? static_cast<int>(length_a > length_b) - static_cast<int>(length_a < length_b)
+                   : static_cast<int>(compare_result > 0) - static_cast<int>(compare_result < 0);
+        }
+
+        const value_type *ptr_{nullptr};
+        size_type length_{0};
+    };
+
+    // This large function is defined inline so that in a fairly common case where
+    // one of the arguments is a literal, the compiler can elide a lot of the
+    // following comparisons.
+
+    constexpr bool operator==(std::basic_string_view<char32_t> y, unicode_view x) noexcept {
+        return x == y;
+    }
+
+    constexpr bool operator==(const char32_t *ptr, unicode_view x) noexcept {
+        std::basic_string_view<char32_t> y(ptr);
+        return x == y;
+    }
+
+    constexpr bool operator!=(std::basic_string_view<char32_t> y, unicode_view x) noexcept {
+        return !(x == y);
+    }
+
+    constexpr bool operator!=(const char32_t *y, unicode_view x) noexcept {
+        return !(x == y);
+    }
+
+    // IO Insertion Operator
+    std::ostream &operator<<(std::ostream &o, unicode_view piece);
+
+    // ClippedSubstr()
+    //
+    // Like `s.substr(pos, n)`, but clips `pos` to an upper bound of `s.size()`.
+    // Provided because std::unicode_view::substr throws if `pos > size()`
+    inline unicode_view ClippedSubstr(unicode_view s, size_t pos, size_t n = unicode_view::npos) {
+        pos = (std::min)(pos, static_cast<size_t>(s.size()));
+        return s.substr(pos, n);
+    }
+
+}  // namespace vamos
+
+namespace std {
+
+    template<>
+    struct hash<::vamos::unicode_view> {
+        std::size_t operator()(const ::vamos::unicode_view &str) const {
+            constexpr size_t ele_size = sizeof(::vamos::unicode_view::value_type);
+            using view_type = std::basic_string_view<vamos::unicode_view::value_type>;
+            view_type view(str.data(), str.size() * ele_size);
+            return std::hash<view_type>()(view);
+        }
+    };
+
+}  // namespace std
